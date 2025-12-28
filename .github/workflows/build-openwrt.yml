@@ -17,7 +17,7 @@ on:
         required: true
         default: 'snapshot'
         type: string
-
+        
 env:
   REPO_URL: https://github.com/neuro-dev/openwrt.git
   REPO_BRANCH: openwrt-24.10
@@ -28,7 +28,7 @@ env:
   CUSTOM_CONFIG_SH: ${{ github.workspace }}/custom-config.sh
   PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
   TZ: Europe/Moscow
-  DEVICE_NAME: r2s
+  DEVICE_NAME: unknown
   FILE_DATE: unknown
   FIRMWARE: unknown
 
@@ -61,7 +61,7 @@ jobs:
 
     - name: Download the sources
       run: git clone --branch $REPO_BRANCH $REPO_URL
-
+      
     - name: Auto select a specific code revision
       id: autoselect
       if: github.event.client_payload.version == 'stable'
@@ -93,7 +93,7 @@ jobs:
       id: compile
       run: |
         cd $BUILD_ROOT && echo "$(($(nproc)+1)) thread compile"
-        IGNORE_ERRORS=m make -j$(($(nproc)+1)) defconfig download clean world || IGNORE_ERRORS=m make -j1 defconfig download clean world V=s
+        make -j$(nproc) || make -j1 || make -j1 V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
