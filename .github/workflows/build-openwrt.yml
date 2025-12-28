@@ -78,6 +78,7 @@ jobs:
 
     - name: Load custom
       run: |
+        export FORCE_UNSAFE_CONFIGURE=1
         chmod +x *.sh
         $CUSTOM_FEEDS_SH
         $BUILD_ROOT/scripts/feeds update -a && $BUILD_ROOT/scripts/feeds install -a
