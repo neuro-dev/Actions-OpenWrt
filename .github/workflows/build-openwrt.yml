@@ -35,15 +35,7 @@ env:
 jobs:
   build:
     runs-on: ubuntu-22.04
-
     steps:
-
-    - name: Checkout
-      uses: actions/checkout@main
-
-    - name: Download the sources
-      run: git clone --branch $REPO_BRANCH $REPO_URL
-
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -62,6 +54,12 @@ jobs:
         remove-haskell: true
         remove-codeql: true
         remove-docker-images: true
+
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Download the sources
+      run: git clone --branch $REPO_BRANCH $REPO_URL
       
     - name: Auto select a specific code revision
       id: autoselect
@@ -76,13 +74,6 @@ jobs:
       run: |
         cd $BUILD_ROOT && git checkout ${{ github.event.inputs.version }}
         echo "status=success" >> $GITHUB_OUTPUT
-        
-    - name: Download the sources
-      run: git clone --branch $REPO_BRANCH $REPO_URL
-
-    - name: Start SSH via tmate
-      if: github.event.inputs.ssh == 'true'
-      uses: rdp-studio/ssh2actions@main
 
     - name: Load custom
       run: |
@@ -94,11 +85,15 @@ jobs:
         $CUSTOM_CONFIG_SH
         $PREBUILD_MISC_SH
 
+    - name: Start SSH via tmate
+      if: github.event.inputs.ssh == 'true'
+      uses: rdp-studio/ssh2actions@main
+
     - name: Build the firmware image
       id: compile
       run: |
         cd $BUILD_ROOT && echo "$(($(nproc)+1)) thread compile"
-        make -j$(nproc) defconfig download clean world V=s
+        IGNORE_ERRORS=m make -j$(($(nproc)+1)) defconfig download clean world || IGNORE_ERRORS=m make -j1 defconfig download clean world V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
@@ -121,7 +116,7 @@ jobs:
         { echo '### SHA256SUMS'; echo '```txt'; cat sha256sums; echo '```'; } > $BUILD_ROOT/SHA256SUMS
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
-
+        
     - name: Upload firmware directory
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success'
@@ -135,7 +130,7 @@ jobs:
       run: |
         echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
-
+    
     - name: Generate snapshot Release Tag
       id: snapshottag 
       if: github.event.inputs.version == 'snapshot'
@@ -150,6 +145,16 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.stabletag.outputs.release_tag }}
+        files: ${{ env.FIRMWARE }}/*
+        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
+
+    - name: Upload snapshot firmware to Release
+      uses: softprops/action-gh-release@master
+      if: steps.snapshottag.outputs.status == 'success'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.snapshottag.outputs.release_tag }}
         files: ${{ env.FIRMWARE }}/*
         body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
 
