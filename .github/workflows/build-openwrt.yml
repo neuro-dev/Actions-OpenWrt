@@ -97,8 +97,8 @@ jobs:
         echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
         
     - name: Start SSH via tmate
+      if: always()
       uses: rdp-studio/ssh2actions@main
-      if: github.event.inputs.ssh == 'true'
       
     - name: Check space usage
       run: df -hT
