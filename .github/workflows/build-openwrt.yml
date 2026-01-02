@@ -43,7 +43,7 @@ jobs:
 
     - name: Download the sources
       run: git clone --branch $REPO_BRANCH $REPO_URL
-      
+
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -76,7 +76,10 @@ jobs:
       run: |
         cd $BUILD_ROOT && git checkout ${{ github.event.inputs.version }}
         echo "status=success" >> $GITHUB_OUTPUT
-    
+        
+    - name: Download the sources
+      run: git clone --branch $REPO_BRANCH $REPO_URL
+
     - name: Start SSH via tmate
       if: github.event.inputs.ssh == 'true'
       uses: rdp-studio/ssh2actions@main
