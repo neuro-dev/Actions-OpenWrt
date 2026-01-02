@@ -34,7 +34,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Initialization environment
@@ -75,6 +75,10 @@ jobs:
       run: |
         cd $BUILD_ROOT && git checkout ${{ github.event.inputs.version }}
         echo "status=success" >> $GITHUB_OUTPUT
+    
+    - name: Start SSH via tmate
+      if: github.event.inputs.ssh == 'true'
+      uses: rdp-studio/ssh2actions@main
 
     - name: Load custom
       run: |
@@ -90,15 +94,11 @@ jobs:
       id: compile
       run: |
         cd $BUILD_ROOT && echo "$(($(nproc)+1)) thread compile"
-        make -j1 defconfig download clean world V=s
+        make -j$(nproc) defconfig download clean world V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
-        
-    - name: Start SSH via tmate
-      if: always()
-      uses: rdp-studio/ssh2actions@main
       
     - name: Check space usage
       run: df -hT
@@ -146,16 +146,6 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.stabletag.outputs.release_tag }}
-        files: ${{ env.FIRMWARE }}/*
-        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
-
-    - name: Upload snapshot firmware to Release
-      uses: softprops/action-gh-release@master
-      if: steps.snapshottag.outputs.status == 'success'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.snapshottag.outputs.release_tag }}
         files: ${{ env.FIRMWARE }}/*
         body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
 
