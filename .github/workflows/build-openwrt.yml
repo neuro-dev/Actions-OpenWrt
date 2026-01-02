@@ -37,6 +37,13 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
+
+    - name: Checkout
+      uses: actions/checkout@main
+
+    - name: Download the sources
+      run: git clone --branch $REPO_BRANCH $REPO_URL
+      
     - name: Initialization environment
       env:
         DEBIAN_FRONTEND: noninteractive
@@ -55,12 +62,6 @@ jobs:
         remove-haskell: true
         remove-codeql: true
         remove-docker-images: true
-
-    - name: Checkout
-      uses: actions/checkout@main
-
-    - name: Download the sources
-      run: git clone --branch $REPO_BRANCH $REPO_URL
       
     - name: Auto select a specific code revision
       id: autoselect
