@@ -1,152 +1,363 @@
-name: Build OpenWrt firmware for x1_riscv64
+name: 🚀 Build OpenWrt for x1_riscv64
 
 on:
   repository_dispatch:
   workflow_dispatch:
     inputs:
       ssh:
-        description: 'SSH connection to Actions'
-        required: true
-        default: 'false'
-        type: choice
-        options:
-        - "true"
-        - "false"
+        description: 'Enable SSH debugging'
+        required: false
+        default: false
+        type: boolean
       version:
-        description: 'OWRT Repo Branch'
-        required: true
+        description: 'OpenWrt branch'
+        required: false
         default: 'openwrt-24.10'
         type: string
+      force_rebuild:
+        description: 'Force clean rebuild'
+        required: false
+        default: false
+        type: boolean
+      upload_release:
+        description: 'Upload to GitHub Releases'
+        required: false
+        default: true
+        type: boolean
+      cleanup_releases:  # ДОБАВЛЕНО
+        description: 'Clean old releases after build'
+        required: false
+        default: false
+        type: boolean
 
 env:
-  REPO_URL: https://github.com/neuro-dev/openwrt.git
-  REPO_BRANCH: ${{ github.event.inputs.version }}
+  # Основные переменные
   BUILD_ROOT: ${{ github.workspace }}/openwrt
-  DEPENDENCIES: ${{ github.workspace }}/dependencies.txt
-  CUSTOM_FEEDS_SH: ${{ github.workspace }}/custom-feeds.sh
-  CUSTOM_PACKAGES_SH: ${{ github.workspace }}/custom-packages.sh
-  CUSTOM_CONFIG_SH: ${{ github.workspace }}/custom-config.sh
-  PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
   TZ: Europe/Moscow
-  DEVICE_NAME: unknown
-  FIRMWARE: unknown
+  
+  # Утилиты
+  NPROC: $(($(nproc) + 1))
 
 jobs:
-  setup:
+  prepare:
+    name: 📦 Подготовка окружения
     runs-on: ubuntu-22.04
+    outputs:
+      cache_key: ${{ steps.cache_key.outputs.value }}
+    
     steps:
-      - name: Checkout
-        uses: actions/checkout@main
-
-      - name: Initialization environment
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          
+      - name: 🔍 Validate required files
+        id: validate
+        run: |
+          REQUIRED_FILES=("dependencies.txt" "custom-feeds.sh")
+          missing_files=()
+          for file in "${REQUIRED_FILES[@]}"; do
+            if [[ ! -f "$file" ]]; then
+              missing_files+=("$file")
+            fi
+          done
+          
+          if [[ ${#missing_files[@]} -gt 0 ]]; then
+            echo "❌ Missing files: ${missing_files[*]}"
+            echo "status=error" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          echo "status=success" >> "$GITHUB_OUTPUT"
+          
+      - name: 🏗️ Setup build environment
+        if: steps.validate.outputs.status == 'success'
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
-          sudo apt-get -qq update && sudo apt-get -qq upgrade
-          sudo apt-get -qq install $(cat $DEPENDENCIES)
-          sudo apt-get -qq autoremove --purge
-          sudo apt-get -qq clean
+          echo "🕐 Setting timezone to $TZ"
           sudo timedatectl set-timezone "$TZ"
+          
+          echo "📦 Installing dependencies..."
+          sudo apt-get update -qq
+          
+          # Читаем зависимости с обработкой ошибок
+          if [[ -f "dependencies.txt" ]]; then
+            sudo xargs apt-get install -qq --no-install-recommends -y < dependencies.txt
+          else
+            # Минимальный набор для OpenWrt
+            sudo apt-get install -qq -y \
+              build-essential ccache curl file gawk gettext git \
+              libncurses-dev libssl-dev python3 rsync unzip wget \
+              zlib1g-dev
+          fi
+          
+          echo "🧹 Cleaning up..."
+          sudo apt-get autoremove -qq -y
+          sudo apt-get clean -qq
+          sudo rm -rf /var/lib/apt/lists/*
+          
+      - name: 🗝️ Generate cache key
+        id: cache_key
+        if: steps.validate.outputs.status == 'success'
+        run: |
+          # Уникальный ключ на основе зависимостей и ветки
+          DEPS_HASH=$(sha256sum dependencies.txt 2>/dev/null | cut -d' ' -f1 || echo "no-deps")
+          KEY="${{ github.sha }}-${{ github.event.inputs.version || 'openwrt-24.10' }}-$DEPS_HASH"
+          echo "value=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Generated cache key: $KEY"
 
   build:
+    name: 🔨 Сборка прошивки
+    needs: prepare
     runs-on: ubuntu-22.04
-    needs: setup
-    steps:
-    - name: Maximize build disk space
-      uses: easimon/maximize-build-space@master
-      with:
-        remove-dotnet: true
-        remove-android: true
-        remove-haskell: true
-        remove-codeql: true
-        remove-docker-images: true
-
-    - name: Checkout
-      uses: actions/checkout@main
-
-    - name: Download the sources
-      run: git clone --branch $REPO_BRANCH $REPO_URL
-
-    - name: Load custom
-      run: |
-        export FORCE_UNSAFE_CONFIGURE=1
-        chmod +x *.sh
-        $CUSTOM_FEEDS_SH
-        $BUILD_ROOT/scripts/feeds update -a && $BUILD_ROOT/scripts/feeds install -a
-        $CUSTOM_PACKAGES_SH
-        $CUSTOM_CONFIG_SH
-        $PREBUILD_MISC_SH
-
-    - name: Start SSH via tmate
-      if: github.event.inputs.ssh == 'true'
-      uses: rdp-studio/ssh2actions@main
-
-    - name: Build the firmware image
-      id: compile
-      run: |
-        cd $BUILD_ROOT && echo "$(($(nproc)+1)) thread compile"
-        IGNORE_ERRORS=m make -j$(($(nproc)+1)) defconfig download clean world || IGNORE_ERRORS=m make -j1 defconfig download clean world V=s
-        echo "status=success" >> $GITHUB_OUTPUT
-        grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
-        [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
+    timeout-minutes: 180
+    env:
+      FORCE_UNSAFE_CONFIGURE: 1
       
-    - name: Check space usage
-      run: df -hT
-
-    - name: Upload bin directory
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success'
-      with:
-        name: BIN_${{ env.REPO_BRANCH }}_${{ env.DEVICE_NAME }}_${{ github.ref_name }}
-        path: ${{ env.BUILD_ROOT }}/bin
-
-    - name: Organize files
-      id: organize
-      run: |
-        cd $BUILD_ROOT/bin/targets/*/* && rm -rf packages
-        { echo '### SHA256SUMS'; echo '```txt'; cat sha256sums; echo '```'; } > $BUILD_ROOT/SHA256SUMS
-        echo "FIRMWARE=$PWD" >> $GITHUB_ENV
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload firmware directory
-      uses: actions/upload-artifact@main
-      if: steps.organize.outputs.status == 'success'
-      with:
-        name: FIRMWARE_${{ env.REPO_BRANCH }}_${{ env.DEVICE_NAME }}_${{ github.ref_name }}
-        path: ${{ env.FIRMWARE }}
-
-    - name: Generate Release Tag
-      id: stabletag
-      run: |
-        echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)" >> $GITHUB_OUTPUT
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Upload stable firmware to Release
-      uses: softprops/action-gh-release@master
-      if: steps.stabletag.outputs.status == 'success'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.stabletag.outputs.release_tag }}
-        files: ${{ env.FIRMWARE }}/*
-        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS # Сделать файл с изменениями
-  
-  clear_workflow:
-    runs-on: ubuntu-22.04    
-    steps:  
-    #Добавить выгрузку кэша или сбилженного тулчейна
-    - name: Delete workflow runs
-      if: always()
-      uses: Mattraks/delete-workflow-runs@main
-      with:
-        retain_days: 30
-        keep_minimum_runs: 5
-
-    - name: Remove old Releases
-      if: always()
-      uses: dev-drprasad/delete-older-releases@master
-      with:
-        keep_latest: 5
-        delete_tags: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: ⬇️ Checkout repository
+        uses: actions/checkout@v4
+        
+      - name: 📥 Download OpenWrt sources
+        run: |
+          echo "📥 Cloning OpenWrt branch: ${{ github.event.inputs.version || 'openwrt-24.10' }}"
+          REPO_URL="https://github.com/neuro-dev/openwrt.git"
+          BRANCH="${{ github.event.inputs.version || 'openwrt-24.10' }}"
+          
+          if [[ "${{ github.event.inputs.force_rebuild || 'false' }}" == "true" ]]; then
+            echo "🧹 Force clean clone requested"
+            rm -rf "$BUILD_ROOT"
+          fi
+          
+          if [[ ! -d "$BUILD_ROOT/.git" ]]; then
+            git clone --depth=1 --branch "$BRANCH" "$REPO_URL" "$BUILD_ROOT"
+          else
+            echo "✅ Repository already exists, updating..."
+            cd "$BUILD_ROOT"
+            git fetch origin "$BRANCH"
+            git reset --hard origin/"$BRANCH"
+          fi
+          
+      - name: 🗃️ Restore ccache and downloads cache
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ env.BUILD_ROOT }}/dl
+            ${{ env.BUILD_ROOT }}/.ccache
+            ~/.ccache
+          key: ${{ needs.prepare.outputs.cache_key }}
+          restore-keys: |
+            openwrt-dl-
+            
+      - name: 🔧 Apply custom configurations
+        run: |
+          echo "🔧 Applying custom configurations..."
+          chmod +x *.sh 2>/dev/null || true
+          
+          # Применяем кастомные фиды
+          if [[ -f "custom-feeds.sh" ]]; then
+            echo "📦 Running custom-feeds.sh"
+            ./custom-feeds.sh
+          fi
+          
+          # Обновляем и устанавливаем фиды
+          cd "$BUILD_ROOT"
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
+          
+          # Дополнительные пакеты
+          if [[ -f "custom-packages.sh" ]]; then
+            echo "📦 Running custom-packages.sh"
+            ../custom-packages.sh
+          fi
+          
+          # Конфигурация
+          if [[ -f "custom-config.sh" ]]; then
+            echo "⚙️ Running custom-config.sh"
+            ../custom-config.sh
+          fi
+          
+          # Предсборочные скрипты
+          if [[ -f "prebuild-misc.sh" ]]; then
+            echo "🔨 Running prebuild-misc.sh"
+            ../prebuild-misc.sh
+          fi
+          
+      - name: 🐛 Enable SSH debugging (optional)
+        if: ${{ github.event.inputs.ssh == 'true' }}
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+          
+      - name: 🔨 Build firmware
+        id: compile
+        run: |
+          cd "$BUILD_ROOT"
+          
+          echo "🏗️ Starting build with $NPROC threads..."
+          echo "📊 Available memory: $(free -h | awk '/^Mem:/ {print $2}')"
+          
+          # Создаем конфиг
+          make defconfig
+          
+          # Скачиваем недостающие пакеты
+          make download
+          
+          # Определяем стратегию сборки
+          if [[ "${{ github.event.inputs.force_rebuild || 'false' }}" == "true" ]]; then
+            echo "🧹 Force clean build..."
+            make clean
+          fi
+          
+          # Пытаемся собрать с максимальной параллелизацией
+          set +e
+          make -j$NPROC
+          EXIT_CODE=$?
+          
+          # Если не удалось, пробуем с одним ядром для отладки
+          if [[ $EXIT_CODE -ne 0 ]]; then
+            echo "⚠️ Parallel build failed, trying single-threaded with verbose output..."
+            make -j1 V=sc 2>&1 | tail -100
+          fi
+          
+          # Проверяем наличие собранных файлов
+          if ls bin/targets/*/*/openwrt-* 1> /dev/null 2>&1; then
+            echo "✅ Build successful"
+            echo "status=success" >> "$GITHUB_OUTPUT"
+            
+            # Определяем имя устройства
+            if grep -q '^CONFIG_TARGET.*DEVICE.*=y' .config; then
+              DEVICE_NAME=$(grep '^CONFIG_TARGET.*DEVICE.*=y' .config | \
+                           sed -r 's/.*DEVICE_(.*)=y/\1/' | head -1)
+              echo "DEVICE_NAME=$DEVICE_NAME" >> "$GITHUB_ENV"
+              echo "device_name=$DEVICE_NAME" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            echo "❌ No firmware files found"
+            echo "status=failed" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          
+      - name: 💾 Save build cache
+        if: steps.compile.outputs.status == 'success'
+        uses: actions/cache@v3
+        with:
+          path: |
+            ${{ env.BUILD_ROOT }}/dl
+            ${{ env.BUILD_ROOT }}/.ccache
+            ~/.ccache
+          key: ${{ needs.prepare.outputs.cache_key }}
+          
+      - name: 📊 Check disk usage
+        if: always()
+        run: |
+          echo "📊 Final disk usage:"
+          df -hT
+          echo -e "\n📁 Largest directories in workspace:"
+          du -sh ${{ github.workspace }}/* | sort -hr | head -10
+          
+      - name: 📦 Prepare artifacts
+        if: steps.compile.outputs.status == 'success'
+        id: artifacts
+        run: |
+          cd "$BUILD_ROOT"
+          
+          # Удаляем пакеты для экономии места
+          find bin/targets -name "packages" -type d -exec rm -rf {} + 2>/dev/null || true
+          
+          # Создаем файл с информацией о сборке
+          {
+            echo "# Build Information"
+            echo "Date: $(date)"
+            echo "Repository: $GITHUB_REPOSITORY"
+            echo "Branch: ${{ github.ref_name }}"
+            echo "Commit: $GITHUB_SHA"
+            echo "OpenWrt Branch: ${{ github.event.inputs.version || 'openwrt-24.10' }}"
+            echo "Device: ${{ steps.compile.outputs.device_name || 'unknown' }}"
+            echo "Runner: ${{ runner.os }} (${{ runner.arch }})"
+            echo -e "\n# SHA256 Checksums"
+            echo '```'
+            cat bin/targets/*/*/sha256sums 2>/dev/null || echo "No checksums found"
+            echo '```'
+          } > BUILD_INFO.md
+          
+          # Находим путь к прошивкам
+          FIRMWARE_PATH=$(find bin/targets -type f -name "*.bin" -o -name "*.img" | head -1 | xargs dirname 2>/dev/null || echo "")
+          
+          if [[ -n "$FIRMWARE_PATH" ]]; then
+            # Сохраняем путь в файл для использования в следующих шагах
+            echo "$FIRMWARE_PATH" > firmware_path.txt
+            echo "📁 Firmware path: $FIRMWARE_PATH"
+            
+            # Считаем количество файлов
+            FILE_COUNT=$(find "$FIRMWARE_PATH" -type f | wc -l)
+            echo "📊 Found $FILE_COUNT firmware files"
+          else
+            echo "⚠️ No firmware files found!"
+          fi
+          
+      - name: 📍 Read firmware path
+        id: firmware_path
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          if [[ -f "$BUILD_ROOT/firmware_path.txt" ]]; then
+            FIRMWARE_PATH=$(cat "$BUILD_ROOT/firmware_path.txt")
+            echo "path=$FIRMWARE_PATH" >> "$GITHUB_OUTPUT"
+            echo "Firmware path from file: $FIRMWARE_PATH"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "⚠️ No firmware path file found"
+          fi
+          
+      - name: 🚢 Upload binaries as artifact
+        if: steps.compile.outputs.status == 'success'
+        uses: actions/upload-artifact@v4
+        with:
+          name: binaries-${{ github.run_number }}-${{ steps.compile.outputs.device_name || 'unknown' }}
+          path: ${{ env.BUILD_ROOT }}/bin
+          retention-days: 7
+          compression-level: 0
+          
+      - name: 🚢 Upload firmware as artifact
+        if: steps.compile.outputs.status == 'success' && steps.firmware_path.outputs.path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: firmware-${{ github.run_number }}-${{ steps.compile.outputs.device_name || 'unknown' }}
+          path: ${{ env.BUILD_ROOT }}/${{ steps.firmware_path.outputs.path }}
+          retention-days: 7
+          
+      - name: 🏷️ Upload to GitHub Release
+        if: steps.compile.outputs.status == 'success' && steps.firmware_path.outputs.path != '' && github.event.inputs.upload_release == 'true'
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: "Build #${{ github.run_number }} - ${{ steps.compile.outputs.device_name || 'unknown' }}"
+          body_path: ${{ env.BUILD_ROOT }}/BUILD_INFO.md
+          files: ${{ env.BUILD_ROOT }}/${{ steps.firmware_path.outputs.path }}/*
+          draft: true
+          prerelease: false
+          
+  cleanup:
+    name: 🧹 Очистка
+    if: always() && github.ref == 'refs/heads/main'
+    needs: [build]
+    runs-on: ubuntu-22.04
+    
+    steps:
+      - name: 📋 Cleanup old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2
+        with:
+          retain_days: 7
+          keep_minimum_runs: 3
+          delete_run_by_conclusion_pattern: "failure"
+          
+      - name: 🗑️ Cleanup old releases (optional)
+        if: ${{ github.event.inputs.cleanup_releases == 'true' && github.ref == 'refs/heads/main' }}
+        uses: dev-drprasad/delete-older-releases@v0.2.0
+        with:
+          keep_latest: 10
+          delete_tag_pattern: "build-*"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
