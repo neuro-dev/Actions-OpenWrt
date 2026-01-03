@@ -1,4 +1,4 @@
-name: Build OpenWrt
+name: Build OpenWrt firmware for x1_riscv64
 
 on:
   repository_dispatch:
@@ -17,7 +17,7 @@ on:
         required: true
         default: 'openwrt-24.10'
         type: string
-        
+
 env:
   REPO_URL: https://github.com/neuro-dev/openwrt.git
   REPO_BRANCH: ${{ github.event.inputs.version }}
@@ -29,39 +29,29 @@ env:
   PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
   TZ: Europe/Moscow
   DEVICE_NAME: unknown
-  FILE_DATE: unknown
   FIRMWARE: unknown
 
 jobs:
   setup:
     runs-on: ubuntu-22.04
-    outputs:
-      dependencies: ${{ steps.read-deps.outputs.dependencies }}
     steps:
       - name: Checkout
         uses: actions/checkout@main
 
-      - name: Read dependencies
-        id: read-deps
+      - name: Initialization environment
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
-          DEPS=$(cat dependencies.txt)
-          echo "dependencies=${DEPS}" >> $GITHUB_OUTPUT
-
+          sudo apt-get -qq update && sudo apt-get -qq upgrade
+          sudo apt-get -qq install $(cat $DEPENDENCIES)
+          sudo apt-get -qq autoremove --purge
+          sudo apt-get -qq clean
+          sudo timedatectl set-timezone "$TZ"
 
   build:
     runs-on: ubuntu-22.04
     needs: setup
     steps:
-    - name: Initialization environment
-      env:
-        DEBIAN_FRONTEND: noninteractive
-      run: |
-        sudo apt-get -qq update && sudo apt-get -qq upgrade
-        sudo apt-get -qq install ${{ needs.setup.outputs.dependencies }}
-        sudo apt-get -qq autoremove --purge
-        sudo apt-get -qq clean
-        sudo timedatectl set-timezone "$TZ"
-
     - name: Maximize build disk space
       uses: easimon/maximize-build-space@master
       with:
@@ -76,20 +66,6 @@ jobs:
 
     - name: Download the sources
       run: git clone --branch $REPO_BRANCH $REPO_URL
-      
-    - name: Auto select a specific code revision
-      id: autoselect
-      if: github.event.client_payload.version == 'stable'
-      run: |
-        cd $BUILD_ROOT && git checkout $(git tag --sort=-creatordate | head -n1)
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Manual select a specific code revision
-      id: manualselect
-      if: github.event.inputs.version != null && github.event.inputs.version != 'snapshot'
-      run: |
-        cd $BUILD_ROOT && git checkout ${{ github.event.inputs.version }}
-        echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Load custom
       run: |
@@ -113,7 +89,6 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
       
     - name: Check space usage
       run: df -hT
@@ -122,7 +97,7 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success'
       with:
-        name: OpenWrt_bin_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        name: BIN_${{ env.REPO_BRANCH }}_${{ env.DEVICE_NAME }}_${{ github.ref_name }}
         path: ${{ env.BUILD_ROOT }}/bin
 
     - name: Organize files
@@ -137,21 +112,13 @@ jobs:
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success'
       with:
-        name: OpenWrt_firmware_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        name: FIRMWARE_${{ env.REPO_BRANCH }}_${{ env.DEVICE_NAME }}_${{ github.ref_name }}
         path: ${{ env.FIRMWARE }}
 
-    - name: Generate stable Release Tag
+    - name: Generate Release Tag
       id: stabletag
-      if: steps.autoselect.outputs.status == 'success' || steps.manualselect.outputs.status == 'success'
       run: |
-        echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        echo "status=success" >> $GITHUB_OUTPUT
-    
-    - name: Generate snapshot Release Tag
-      id: snapshottag 
-      if: github.event.inputs.version == 'snapshot'
-      run: |
-        echo "release_tag=SNAPSHOT_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload stable firmware to Release
@@ -162,18 +129,12 @@ jobs:
       with:
         tag_name: ${{ steps.stabletag.outputs.release_tag }}
         files: ${{ env.FIRMWARE }}/*
-        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
-
-    - name: Upload snapshot firmware to Release
-      uses: softprops/action-gh-release@master
-      if: steps.snapshottag.outputs.status == 'success'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.snapshottag.outputs.release_tag }}
-        files: ${{ env.FIRMWARE }}/*
-        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
-
+        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS # Сделать файл с изменениями
+  
+  clear_workflow:
+    runs-on: ubuntu-22.04    
+    steps:  
+    #Добавить выгрузку кэша или сбилженного тулчейна
     - name: Delete workflow runs
       if: always()
       uses: Mattraks/delete-workflow-runs@main
