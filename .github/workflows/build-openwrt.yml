@@ -20,7 +20,7 @@ on:
         
 env:
   REPO_URL: https://github.com/neuro-dev/openwrt.git
-  REPO_BRANCH: ${{ github.event.client_payload.version }}
+  REPO_BRANCH: ${{ github.event.inputs.version }}
   BUILD_ROOT: ${{ github.workspace }}/openwrt
   DEPENDENCIES: ${{ github.workspace }}/dependencies.txt
   CUSTOM_FEEDS_SH: ${{ github.workspace }}/custom-feeds.sh
