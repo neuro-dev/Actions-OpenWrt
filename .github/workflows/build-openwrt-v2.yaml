@@ -23,14 +23,16 @@ on:
         required: false
         default: true
         type: boolean
+      cleanup_releases:  # ДОБАВЛЕНО
+        description: 'Clean old releases after build'
+        required: false
+        default: false
+        type: boolean
 
 env:
   # Основные переменные
   BUILD_ROOT: ${{ github.workspace }}/openwrt
   TZ: Europe/Moscow
-  
-  # Кэш ключи
-  CACHE_KEY_PREFIX: openwrt-${{ github.run_id }}
   
   # Утилиты
   NPROC: $(($(nproc) + 1))
@@ -99,7 +101,7 @@ jobs:
         run: |
           # Уникальный ключ на основе зависимостей и ветки
           DEPS_HASH=$(sha256sum dependencies.txt 2>/dev/null | cut -d' ' -f1 || echo "no-deps")
-          KEY="${{ github.sha }}-${{ github.event.inputs.version }}-$DEPS_HASH"
+          KEY="${{ github.sha }}-${{ github.event.inputs.version || 'openwrt-24.10' }}-$DEPS_HASH"
           echo "value=$KEY" >> "$GITHUB_OUTPUT"
           echo "Generated cache key: $KEY"
 
@@ -117,11 +119,11 @@ jobs:
         
       - name: 📥 Download OpenWrt sources
         run: |
-          echo "📥 Cloning OpenWrt branch: ${{ github.event.inputs.version }}"
+          echo "📥 Cloning OpenWrt branch: ${{ github.event.inputs.version || 'openwrt-24.10' }}"
           REPO_URL="https://github.com/neuro-dev/openwrt.git"
           BRANCH="${{ github.event.inputs.version || 'openwrt-24.10' }}"
           
-          if [[ "${{ github.event.inputs.force_rebuild }}" == "true" ]]; then
+          if [[ "${{ github.event.inputs.force_rebuild || 'false' }}" == "true" ]]; then
             echo "🧹 Force clean clone requested"
             rm -rf "$BUILD_ROOT"
           fi
@@ -181,7 +183,7 @@ jobs:
           fi
           
       - name: 🐛 Enable SSH debugging (optional)
-        if: ${{ github.event.inputs.ssh == true }}
+        if: ${{ github.event.inputs.ssh == 'true' }}
         uses: mxschmitt/action-tmate@v3
         with:
           limit-access-to-actor: true
@@ -201,7 +203,7 @@ jobs:
           make download
           
           # Определяем стратегию сборки
-          if [[ "${{ github.event.inputs.force_rebuild }}" == "true" ]]; then
+          if [[ "${{ github.event.inputs.force_rebuild || 'false' }}" == "true" ]]; then
             echo "🧹 Force clean build..."
             make clean
           fi
@@ -282,7 +284,8 @@ jobs:
           FIRMWARE_PATH=$(find bin/targets -type f -name "*.bin" -o -name "*.img" | head -1 | xargs dirname 2>/dev/null || echo "")
           
           if [[ -n "$FIRMWARE_PATH" ]]; then
-            echo "FIRMWARE_PATH=$FIRMWARE_PATH" >> "$GITHUB_ENV"
+            # Сохраняем путь в файл для использования в следующих шагах
+            echo "$FIRMWARE_PATH" > firmware_path.txt
             echo "📁 Firmware path: $FIRMWARE_PATH"
             
             # Считаем количество файлов
@@ -290,6 +293,19 @@ jobs:
             echo "📊 Found $FILE_COUNT firmware files"
           else
             echo "⚠️ No firmware files found!"
+          fi
+          
+      - name: 📍 Read firmware path
+        id: firmware_path
+        if: steps.compile.outputs.status == 'success'
+        run: |
+          if [[ -f "$BUILD_ROOT/firmware_path.txt" ]]; then
+            FIRMWARE_PATH=$(cat "$BUILD_ROOT/firmware_path.txt")
+            echo "path=$FIRMWARE_PATH" >> "$GITHUB_OUTPUT"
+            echo "Firmware path from file: $FIRMWARE_PATH"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "⚠️ No firmware path file found"
           fi
           
       - name: 🚢 Upload binaries as artifact
@@ -302,15 +318,15 @@ jobs:
           compression-level: 0
           
       - name: 🚢 Upload firmware as artifact
-        if: steps.compile.outputs.status == 'success' && env.FIRMWARE_PATH
+        if: steps.compile.outputs.status == 'success' && steps.firmware_path.outputs.path != ''
         uses: actions/upload-artifact@v4
         with:
           name: firmware-${{ github.run_number }}-${{ steps.compile.outputs.device_name || 'unknown' }}
-          path: ${{ env.BUILD_ROOT }}/${{ env.FIRMWARE_PATH }}
+          path: ${{ env.BUILD_ROOT }}/${{ steps.firmware_path.outputs.path }}
           retention-days: 7
           
       - name: 🏷️ Upload to GitHub Release
-        if: steps.compile.outputs.status == 'success' && env.FIRMWARE_PATH && github.event.inputs.upload_release == 'true'
+        if: steps.compile.outputs.status == 'success' && steps.firmware_path.outputs.path != '' && github.event.inputs.upload_release == 'true'
         uses: softprops/action-gh-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -318,7 +334,7 @@ jobs:
           tag_name: build-${{ github.run_number }}
           name: "Build #${{ github.run_number }} - ${{ steps.compile.outputs.device_name || 'unknown' }}"
           body_path: ${{ env.BUILD_ROOT }}/BUILD_INFO.md
-          files: ${{ env.BUILD_ROOT }}/${{ env.FIRMWARE_PATH }}/*
+          files: ${{ env.BUILD_ROOT }}/${{ steps.firmware_path.outputs.path }}/*
           draft: true
           prerelease: false
           
@@ -337,7 +353,7 @@ jobs:
           delete_run_by_conclusion_pattern: "failure"
           
       - name: 🗑️ Cleanup old releases (optional)
-        if: ${{ github.event.inputs.cleanup_releases == 'true' }}
+        if: ${{ github.event.inputs.cleanup_releases == 'true' && github.ref == 'refs/heads/main' }}
         uses: dev-drprasad/delete-older-releases@v0.2.0
         with:
           keep_latest: 10
