@@ -13,28 +13,30 @@ on:
         - "true"
         - "false"
       version:
-        description: 'OpenWrt version'
+        description: 'Custom OpenWrt REPOSITORY branch'
         required: true
-        default: 'snapshot'
+        default: 'openwrt-24.10'
         type: string
         
 env:
   REPO_URL: https://github.com/neuro-dev/openwrt.git
-  REPO_BRANCH: openwrt-24.10
+  REPO_BRANCH: ${{ github.event.inputs.version }}
   BUILD_ROOT: ${{ github.workspace }}/openwrt
   DEPENDENCIES: ${{ github.workspace }}/dependencies-ubuntu.txt
   CUSTOM_FEEDS_SH: ${{ github.workspace }}/custom-feeds.sh
   CUSTOM_PACKAGES_SH: ${{ github.workspace }}/custom-packages.sh
   CUSTOM_CONFIG_SH: ${{ github.workspace }}/custom-config.sh
   PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
+  FIRMWARE_COMMIT_URL: unknown
+  BUILDER_COMMIT_URL: unknown
   TZ: Europe/Moscow
   DEVICE_NAME: unknown
-  FILE_DATE: unknown
+  RELEASE_NAME: unknown
   FIRMWARE: unknown
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
 
     steps:
     - name: Initialization environment
@@ -42,7 +44,7 @@ jobs:
         DEBIAN_FRONTEND: noninteractive
       run: |
         sudo apt-get -qq update && sudo apt-get -qq upgrade
-        sudo apt-get -qq install $(cat $DEPENDENCIES)
+        sudo apt-get -qq install git ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential bzip2 ccache cmake cpio curl device-tree-compiler fastjar flex gawk gettext git gperf haveged help2man intltool libelf-dev libglib2.0-dev libgmp-dev libltdl-dev libmpc-dev libmpfr-dev libncurses5-dev libncursesw5-dev libreadline-dev libssl-dev libtool lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch pkgconf python2.7 python3 python3-pyelftools libpython3-dev qemu-utils rsync scons squashfs-tools subversion swig texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev gcc g++ make golang-go golang-1.21 libpam0g-dev libsnmp-dev snmp libev-dev libpcre3-dev libwrap0-dev libsensors-dev libcap-dev
         sudo apt-get -qq autoremove --purge
         sudo apt-get -qq clean
         sudo timedatectl set-timezone "$TZ"
@@ -60,20 +62,9 @@ jobs:
       uses: actions/checkout@main
 
     - name: Download the sources
-      run: git clone --branch $REPO_BRANCH $REPO_URL
-      
-    - name: Auto select a specific code revision
-      id: autoselect
-      if: github.event.client_payload.version == 'stable'
+      id: sourcedownload
       run: |
-        cd $BUILD_ROOT && git checkout $(git tag --sort=-creatordate | head -n1)
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Manual select a specific code revision
-      id: manualselect
-      if: github.event.inputs.version != null && github.event.inputs.version != 'snapshot'
-      run: |
-        cd $BUILD_ROOT && git checkout ${{ github.event.inputs.version }}
+        git clone --branch $REPO_BRANCH $REPO_URL
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Load custom
@@ -84,6 +75,7 @@ jobs:
         $CUSTOM_PACKAGES_SH
         $CUSTOM_CONFIG_SH
         $PREBUILD_MISC_SH
+        echo "BUILDER_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
 
     - name: Start SSH via tmate
       uses: rdp-studio/ssh2actions@main
@@ -93,49 +85,72 @@ jobs:
       id: compile
       run: |
         cd $BUILD_ROOT && echo "$(($(nproc)+1)) thread compile"
-        make -j$(nproc) || make -j1 || make -j1 V=s
+        IGNORE_ERRORS=m make -j$(($(nproc)+1)) defconfig download clean world || IGNORE_ERRORS=m make -j1 defconfig download clean world V=s
         echo "status=success" >> $GITHUB_OUTPUT
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
-        echo "FILE_DATE=$(date +"%Y%m%d%H%M")" >> $GITHUB_ENV
+        echo "RELEASE_NAME=$(git describe --tags --always --long)" >> $GITHUB_ENV
 
     - name: Check space usage
       run: df -hT
 
     - name: Upload bin directory
+      id: artifact-bin
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success'
       with:
-        name: OpenWrt_bin_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        name: bin_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
         path: ${{ env.BUILD_ROOT }}/bin
+    
+    - name: Upload packages
+      id: artifact-packages
+      uses: actions/upload-artifact@main
+      if: steps.compile.outputs.status == 'success'
+      with:
+        name: packages_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
+        path: $BUILD_ROOT/bin/targets/*/*/packages
 
     - name: Organize files
       id: organize
       run: |
         cd $BUILD_ROOT/bin/targets/*/* && rm -rf packages
-        { echo '### SHA256SUMS'; echo '```txt'; cat sha256sums; echo '```'; } > $BUILD_ROOT/SHA256SUMS
+        echo "FIRMWARE_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
+
+        {
+            echo "# Build Information"
+            echo "**Date:** $(date)"
+            echo "**CODE Commit:** $FIRMWARE_COMMIT_URL"
+            echo "**BUILDER Commit:** $BUILDER_COMMIT_URL"
+            echo "**OpenWrt Branch:** ${{ github.event.inputs.version }}"
+            echo "**Device:** $DEVICE_NAME"
+
+            echo "**Runner:** ${{ runner.os }} (${{ runner.arch }})"
+            echo "# Artifacts"
+            echo "**BIN**: ${{ steps.artifact-bin.outputs.artifact-url }}"
+            echo "**Packages**: ${{ steps.artifact-packages.outputs.artifact-url }}"
+
+
+            echo -e "\n# SHA256 Checksums"
+            echo '```txt'
+            cat bin/targets/*/*/sha256sums 2>/dev/null || echo "No checksums found"
+            echo '```'
+          } > ${{ env.BUILD_ROOT }}/BUILD_INFO.md
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload firmware directory
+      id: artifact-firmware
       uses: actions/upload-artifact@main
       if: steps.organize.outputs.status == 'success'
       with:
-        name: OpenWrt_firmware_${{ env.DEVICE_NAME }}_${{ env.FILE_DATE }}
+        name: firmware_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
         path: ${{ env.FIRMWARE }}
 
     - name: Generate stable Release Tag
       id: stabletag
-      if: steps.autoselect.outputs.status == 'success' || steps.manualselect.outputs.status == 'success'
+      if: steps.sourcedownload.outputs.status == 'success'
       run: |
-        echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
-        echo "status=success" >> $GITHUB_OUTPUT
-
-    - name: Generate snapshot Release Tag
-      id: snapshottag 
-      if: github.event.inputs.version == 'snapshot'
-      run: |
-        echo "release_tag=SNAPSHOT_$(date +"%Y.%m.%d-%H%M")" >> $GITHUB_OUTPUT
+        echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload stable firmware to Release
@@ -145,18 +160,9 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.stabletag.outputs.release_tag }}
+        name: "Build #${{ github.run_number }} - ${{ env.DEVICE_NAME }}"
         files: ${{ env.FIRMWARE }}/*
-        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
-
-    - name: Upload snapshot firmware to Release
-      uses: softprops/action-gh-release@master
-      if: steps.snapshottag.outputs.status == 'success'
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.snapshottag.outputs.release_tag }}
-        files: ${{ env.FIRMWARE }}/*
-        body_path: ${{ env.BUILD_ROOT }}/SHA256SUMS
+        body_path: ${{ env.BUILD_ROOT }}/BUILD_INFO.md
 
     - name: Delete workflow runs
       if: always()
