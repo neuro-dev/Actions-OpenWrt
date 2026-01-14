@@ -27,6 +27,7 @@ env:
   CUSTOM_PACKAGES_SH: ${{ github.workspace }}/custom-packages.sh
   CUSTOM_CONFIG_SH: ${{ github.workspace }}/custom-config.sh
   PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
+  DATE: unknown
   FIRMWARE_COMMIT_URL: unknown
   BUILDER_COMMIT_URL: unknown
   TZ: Europe/Moscow
@@ -61,11 +62,32 @@ jobs:
     - name: Checkout
       uses: actions/checkout@main
 
+
     - name: Download the sources
       id: sourcedownload
       run: |
         git clone --branch $REPO_BRANCH $REPO_URL
+        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
+        echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Cache OpenWrt build
+      uses: actions/cache@v4
+      with:
+        path: |
+          $BUILD_ROOT/.ccache
+          $BUILD_ROOT/staging_dir
+        key: ${{ 'riscv64'}}-${{ hashFiles('**/repo_flag') }}-${{ env.DATE }}
+        restore-keys: |
+          ${{ 'riscv64'}}-${{ hashFiles('**/repo_flag') }}-
+
+    - name: Cache dependencies
+      run: |
+        if [ -d "$(BUILD_ROOT)/staging_dir" ]; then
+          find "$(BUILD_ROOT)/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
+              find "$dir" -type f -exec touch {} +
+          done
+        fi
 
     - name: Load custom
       run: |
@@ -76,6 +98,7 @@ jobs:
         $CUSTOM_CONFIG_SH
         $PREBUILD_MISC_SH
         echo "BUILDER_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
+        echo "FIRMWARE_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
 
     - name: Start SSH via tmate
       uses: rdp-studio/ssh2actions@main
@@ -113,12 +136,14 @@ jobs:
     - name: Organize files
       id: organize
       run: |
+        cd $BUILD_ROOT/bin/packages
+        tar -zcvf Packages.tar.gz ./*
+        cp Packages.tar.gz $BUILD_ROOT/bin/targets/*/*
         cd $BUILD_ROOT/bin/targets/*/* && rm -rf packages
-        echo "FIRMWARE_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
         {
-            echo "# Build Information"
+            echo "# Build #${{ github.run_number }} - ${{ env.DEVICE_NAME }}"
             echo "**Date:** $(date)"
-            echo "**CODE Commit:** $FIRMWARE_COMMIT_URL"
+            echo "**FIRMWARE Commit:** $FIRMWARE_COMMIT_URL"
             echo "**BUILDER Commit:** $BUILDER_COMMIT_URL"
             echo "**OpenWrt Branch:** ${{ github.event.inputs.version }}"
             echo "**Device:** $DEVICE_NAME"
@@ -127,10 +152,6 @@ jobs:
             echo "# Artifacts"
             echo "**BIN**: ${{ steps.artifact-bin.outputs.artifact-url }}"
             echo "**Packages**: ${{ steps.artifact-packages.outputs.artifact-url }}"
-            echo -e "\n# SHA256 Checksums"
-            echo '```txt'
-            cat bin/targets/*/*/sha256sums 2>/dev/null || echo "No checksums found"
-            echo '```'
           } > ${{ env.BUILD_ROOT }}/BUILD_INFO.md
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
@@ -157,7 +178,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.stabletag.outputs.release_tag }}
-        name: "Build #${{ github.run_number }} - ${{ env.DEVICE_NAME }}"
+        name: "${{ env.RELEASE_NAME }} - ${{ env.DEVICE_NAME }}"
         files: ${{ env.FIRMWARE }}/*
         body_path: ${{ env.BUILD_ROOT }}/BUILD_INFO.md
 
