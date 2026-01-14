@@ -83,8 +83,8 @@ jobs:
 
     - name: Cache dependencies
       run: |
-        if [ -d "$(BUILD_ROOT)/staging_dir" ]; then
-          find "$(BUILD_ROOT)/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
+        if [ -d "${{ env.BUILD_ROOT }}/staging_dir" ]; then
+          find "${{ env.BUILD_ROOT }}/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
               find "$dir" -type f -exec touch {} +
           done
         fi
