@@ -67,7 +67,6 @@ jobs:
       id: sourcedownload
       run: |
         git clone --branch $REPO_BRANCH $REPO_URL
-        echo "useVersionInfo=$useVersionInfo" >> $GITHUB_ENV
         echo "DATE=$(date "+%Y-%m-%d %H:%M:%S")" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
 
@@ -75,7 +74,6 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
-          $BUILD_ROOT/.ccache
           $BUILD_ROOT/staging_dir
         key: ${{ 'riscv64'}}-${{ hashFiles('**/repo_flag') }}-${{ env.DATE }}
         restore-keys: |
@@ -98,7 +96,6 @@ jobs:
         $CUSTOM_CONFIG_SH
         $PREBUILD_MISC_SH
         echo "BUILDER_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
-        echo "FIRMWARE_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
 
     - name: Start SSH via tmate
       uses: rdp-studio/ssh2actions@main
@@ -113,6 +110,7 @@ jobs:
         grep '^CONFIG_TARGET.*DEVICE.*=y' .config | sed -r 's/.*DEVICE_(.*)=y/\1/' > DEVICE_NAME
         [ -s DEVICE_NAME ] && echo "DEVICE_NAME=$(cat DEVICE_NAME)" >> $GITHUB_ENV
         echo "RELEASE_NAME=$(git describe --tags --always --long)" >> $GITHUB_ENV
+        echo "FIRMWARE_COMMIT_URL=$(git config --get remote.origin.url | sed 's/\.git$//' | sed 's/git@github.com:/https:\/\/github.com\//')/commit/$(git rev-parse HEAD)" >> $GITHUB_ENV
 
     - name: Check space usage
       run: df -hT
@@ -124,14 +122,6 @@ jobs:
       with:
         name: bin_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
         path: ${{ env.BUILD_ROOT }}/bin
-    
-    - name: Upload packages
-      id: artifact-packages
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success'
-      with:
-        name: packages_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
-        path: $BUILD_ROOT/bin/targets/*/*/packages
 
     - name: Organize files
       id: organize
@@ -151,7 +141,6 @@ jobs:
             echo "**Runner:** ${{ runner.os }} (${{ runner.arch }})"
             echo "# Artifacts"
             echo "**BIN**: ${{ steps.artifact-bin.outputs.artifact-url }}"
-            echo "**Packages**: ${{ steps.artifact-packages.outputs.artifact-url }}"
           } > ${{ env.BUILD_ROOT }}/BUILD_INFO.md
         echo "FIRMWARE=$PWD" >> $GITHUB_ENV
         echo "status=success" >> $GITHUB_OUTPUT
