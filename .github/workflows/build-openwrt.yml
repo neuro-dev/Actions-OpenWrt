@@ -75,18 +75,10 @@ jobs:
       uses: actions/cache@v4
       with:
         path: |
-          $BUILD_ROOT/staging_dir
-        key: ${{ 'riscv64'}}-${{ hashFiles('**/repo_flag') }}-${{ env.DATE }}
+          $BUILD_ROOT/
+        key: openwrt-24.10-${{ 'riscv64' }}-ccache
         restore-keys: |
-          ${{ 'riscv64'}}-${{ hashFiles('**/repo_flag') }}-
-
-    - name: Cache dependencies
-      run: |
-        if [ -d "${{ env.BUILD_ROOT }}/staging_dir" ]; then
-          find "${{ env.BUILD_ROOT }}/staging_dir" -type d -name "stamp" -not -path "*target*" | while read -r dir; do
-              find "$dir" -type f -exec touch {} +
-          done
-        fi
+          openwrt-24.10-${{ 'riscv64' }}-ccache
 
     - name: Load custom
       run: |
@@ -116,20 +108,20 @@ jobs:
     - name: Check space usage
       run: df -hT
 
-    - name: Upload bin directory
-      id: artifact-bin
+    - name: Upload SDK
+      id: artifact-sdk
       uses: actions/upload-artifact@main
       if: steps.compile.outputs.status == 'success'
       with:
-        name: bin_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
-        path: ${{ env.BUILD_ROOT }}/bin
+        name: sdk_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
+        path: ${{ env.BUILD_ROOT }}
 
     - name: Organize files
       id: organize
       run: |
-        cd $BUILD_ROOT/bin/packages
-        tar -zcvf Packages.tar.gz ./*
-        cp Packages.tar.gz $BUILD_ROOT/bin/targets/*/*
+        cd $BUILD_ROOT/
+        tar -zcvf openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz ./*
+        cp openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz $BUILD_ROOT/bin/targets/*/*
         cd $BUILD_ROOT/bin/targets/*/* && rm -rf packages
         {
             echo "# Build #${{ github.run_number }} - ${{ env.DEVICE_NAME }}"
