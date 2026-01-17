@@ -26,6 +26,7 @@ env:
   CUSTOM_FEEDS_SH: ${{ github.workspace }}/custom-feeds.sh
   CUSTOM_PACKAGES_SH: ${{ github.workspace }}/custom-packages.sh
   CUSTOM_CONFIG_SH: ${{ github.workspace }}/custom-config.sh
+  CUSTOM_CONFIG_FILE: ${{ github.workspace }}/custom-config
   PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
   DATE: unknown
   FIRMWARE_COMMIT_URL: unknown
