@@ -117,10 +117,11 @@ jobs:
         echo $(ls -lh openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz | awk '{print $5}')
 
     - name: Upload artifact
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: openwrt-sdk
         path: $BUILD_ROOT/../openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz
+        
         retention-days: 30
 
     - name: Organize files
