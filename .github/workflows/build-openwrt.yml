@@ -108,19 +108,12 @@ jobs:
     - name: Check space usage
       run: df -hT
 
-    - name: Upload SDK
-      id: artifact-sdk
-      uses: actions/upload-artifact@main
-      if: steps.compile.outputs.status == 'success'
-      with:
-        name: sdk_${{ env.DEVICE_NAME }}_${{ env.RELEASE_NAME }}
-        path: ${{ env.BUILD_ROOT }}
-
     - name: Organize files
       id: organize
       run: |
         cd $BUILD_ROOT/
-        tar -zcvf openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz ./*
+        cd ../
+        tar -zcvf openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz openwrt/
         cp openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz $BUILD_ROOT/bin/targets/*/*
         cd $BUILD_ROOT/bin/targets/*/* && rm -rf packages
         {
@@ -150,7 +143,7 @@ jobs:
       id: stabletag
       if: steps.sourcedownload.outputs.status == 'success'
       run: |
-        echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)" >> $GITHUB_OUTPUT
+        echo "release_tag=$(cd $BUILD_ROOT && git describe --tags --abbrev=0 --exact-match)-$(date +%Y%m%d)" >> $GITHUB_OUTPUT
         echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Upload stable firmware to Release
