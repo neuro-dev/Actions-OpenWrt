@@ -12,7 +12,7 @@ CONFIG_KERNEL_DEVTMPFS=y
 
 CONFIG_LUCI_LANG_zh_Hans=y
 CONFIG_PACKAGE_openssh-sftp-server=y
-CONFIG_PACKAGE_dnsmasq=n
+
 CONFIG_PACKAGE_dnsmasq-full=y
 # CONFIG_PACKAGE_dnsmasq is not set
 CONFIG_PACKAGE_iperf3=y
