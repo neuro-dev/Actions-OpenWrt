@@ -28,7 +28,7 @@ env:
   CUSTOM_CONFIG_SH: ${{ github.workspace }}/custom-config.sh
   CUSTOM_CONFIG_FILE: ${{ github.workspace }}/custom-config
   PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
-  SDK_PWD: unknown
+  SDK_PATH: unknown
   DATE: unknown
   FIRMWARE_COMMIT_URL: unknown
   BUILDER_COMMIT_URL: unknown
@@ -85,6 +85,7 @@ jobs:
         chmod +x *.sh
         $CUSTOM_FEEDS_SH
         $BUILD_ROOT/scripts/feeds update -a && $BUILD_ROOT/scripts/feeds install -a
+        $BUILD_ROOT/scripts/feeds uninstall tailscale
         $CUSTOM_PACKAGES_SH
         $CUSTOM_CONFIG_SH
         $PREBUILD_MISC_SH
@@ -113,8 +114,7 @@ jobs:
       run: |
         cd $BUILD_ROOT/
         cd ../
-        echo $(du -sh openwrt)
-        echo $(du -h openwrt)
+        echo $(du -h openwrt/ | sort -hr | head -10)
         tar -zcf openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz openwrt/
         echo $(ls -lh openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz | awk '{print $5}')
         echo "SDK_PATH=$(pwd)" >> $GITHUB_ENV
