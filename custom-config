@@ -48,7 +48,7 @@ CONFIG_PACKAGE_luci-app-zapret=y
 
 #Tailscale
 CONFIG_PACKAGE_tailscale=y
-CONFIG_PACKAGE_luci-app-tailscale=y
+CONFIG_PACKAGE_luci-app-tailscale-community=y
 
 #Docker
 CONFIG_PACKAGE_docker=y
