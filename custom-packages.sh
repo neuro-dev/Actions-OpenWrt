@@ -6,9 +6,9 @@ rm -rf zapret-openwrt
 
 # Load tailscale
 git clone https://github.com/neuro-dev/tailscale-openwrt
-mv tailscale-openwrt/ $BUILD_ROOT/package/tailscale
+mv tailscale-openwrt/ $BUILD_ROOT/package/net/tailscale
 git clone https://github.com/Tokisaki-Galaxy/luci-app-tailscale-community 
-mv luci-app-tailscale-community/luci-app-tailscale $BUILD_ROOT/package
+mv luci-app-tailscale-community/luci-app-tailscale-community $BUILD_ROOT/package
 rm -rf luci-app-tailscale-community
 
 # Load Argon Theme & Config
@@ -18,9 +18,13 @@ git clone https://github.com/jerrykuku/luci-app-argon-config.git
 mv luci-app-argon-config $BUILD_ROOT/package
 
 # Load Docker
-git clone https://github.com/lisaac/luci-lib-docker.git
-mv luci-lib-docker/collections/luci-lib-docker/ $BUILD_ROOT/package/
-rm -rf luci-lib-docker
+git clone https://github.com/lisaac/luci-app-dockerman.git
+mv luci-app-dockerman/applications/luci-app-dockerman/ package/luci-app-dockerman
+rm -rf luci-app-dockerman
+
+#git clone https://github.com/lisaac/luci-lib-docker.git
+#mv luci-lib-docker/collections/luci-lib-docker/ $BUILD_ROOT/package/
+#rm -rf luci-lib-docker
 
 #rm -rf package/libs/openssl
 #git clone https://github.com/misotolar/openwrt-libs-openssl.git package/libs/openssl
