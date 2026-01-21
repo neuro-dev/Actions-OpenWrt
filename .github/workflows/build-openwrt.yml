@@ -85,7 +85,6 @@ jobs:
         chmod +x *.sh
         $CUSTOM_FEEDS_SH
         $BUILD_ROOT/scripts/feeds update -a && $BUILD_ROOT/scripts/feeds install -a
-        $BUILD_ROOT/scripts/feeds uninstall tailscale
         $CUSTOM_PACKAGES_SH
         $CUSTOM_CONFIG_SH
         $PREBUILD_MISC_SH
