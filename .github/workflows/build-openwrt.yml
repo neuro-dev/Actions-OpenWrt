@@ -28,6 +28,7 @@ env:
   CUSTOM_CONFIG_SH: ${{ github.workspace }}/custom-config.sh
   CUSTOM_CONFIG_FILE: ${{ github.workspace }}/custom-config
   PREBUILD_MISC_SH: ${{ github.workspace }}/prebuild-misc.sh
+  SDK_PWD: unknown
   DATE: unknown
   FIRMWARE_COMMIT_URL: unknown
   BUILDER_COMMIT_URL: unknown
@@ -113,14 +114,17 @@ jobs:
         cd $BUILD_ROOT/
         cd ../
         echo $(du -sh openwrt)
+        echo $(du -h openwrt)
         tar -zcf openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz openwrt/
         echo $(ls -lh openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz | awk '{print $5}')
+        echo "SDK_PATH=$(pwd)" >> $GITHUB_ENV
 
     - name: Upload artifact
+      continue-on-error: true
       uses: actions/upload-artifact@v4
       with:
         name: openwrt-sdk
-        path: $BUILD_ROOT/../openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz
+        path: $SDK_PATH/openwrt_sdk_${{ env.RELEASE_NAME }}.tar.gz
         
         retention-days: 30
 
